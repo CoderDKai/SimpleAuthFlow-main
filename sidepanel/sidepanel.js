@@ -33,6 +33,14 @@ const imapSection = document.getElementById('imap-section');
 const inputImapEmailList = document.getElementById('input-imap-email-list');
 const inputImapBridgeHost = document.getElementById('input-imap-bridge-host');
 const inputImapBridgePort = document.getElementById('input-imap-bridge-port');
+// Proxy elements
+const selectProxyType = document.getElementById('select-proxy-type');
+const inputProxyHost = document.getElementById('input-proxy-host');
+const inputProxyPort = document.getElementById('input-proxy-port');
+const proxyHostSep = document.querySelector('.proxy-host-sep');
+const proxyAuthSection = document.getElementById('proxy-auth-section');
+const inputProxyUser = document.getElementById('input-proxy-user');
+const inputProxyPass = document.getElementById('input-proxy-pass');
 let autoContinueMode = 'email';
 
 // ============================================================
@@ -106,6 +114,24 @@ async function restoreState() {
       inputImapBridgePort.value = state.imapBridgePort;
     }
 
+    // Restore proxy settings
+    if (state.proxyType) {
+      selectProxyType.value = state.proxyType;
+      applyProxyUI(state.proxyType);
+    }
+    if (state.proxyHost) {
+      inputProxyHost.value = state.proxyHost;
+    }
+    if (state.proxyPort) {
+      inputProxyPort.value = state.proxyPort;
+    }
+    if (state.proxyUser) {
+      inputProxyUser.value = state.proxyUser;
+    }
+    if (state.proxyPass) {
+      inputProxyPass.value = state.proxyPass;
+    }
+
     if (state.stepStatuses) {
       for (const [step, status] of Object.entries(state.stepStatuses)) {
         updateStepUI(Number(step), status);
@@ -141,6 +167,15 @@ function applyEmailModeUI(mode) {
     inputEmail.placeholder = 'Auto fetch from Burner Mailbox or paste manually';
     inputEmail.readOnly = false;
   }
+}
+
+function applyProxyUI(type) {
+  const hasProxy = type && type !== 'none';
+  const displayVal = hasProxy ? '' : 'none';
+  inputProxyHost.style.display = displayVal;
+  inputProxyPort.style.display = displayVal;
+  proxyHostSep.style.display = displayVal;
+  proxyAuthSection.style.display = displayVal;
 }
 
 // ============================================================
@@ -469,6 +504,50 @@ inputImapBridgePort.addEventListener('change', async () => {
     type: 'SAVE_IMAP_SETTINGS',
     source: 'sidepanel',
     payload: { imapBridgePort: port },
+  });
+});
+
+// Proxy settings
+selectProxyType.addEventListener('change', async () => {
+  const type = selectProxyType.value;
+  applyProxyUI(type);
+  await chrome.runtime.sendMessage({
+    type: 'SAVE_PROXY_SETTINGS',
+    source: 'sidepanel',
+    payload: { proxyType: type },
+  });
+});
+
+inputProxyHost.addEventListener('change', async () => {
+  await chrome.runtime.sendMessage({
+    type: 'SAVE_PROXY_SETTINGS',
+    source: 'sidepanel',
+    payload: { proxyHost: inputProxyHost.value.trim() },
+  });
+});
+
+inputProxyPort.addEventListener('change', async () => {
+  const port = parseInt(inputProxyPort.value) || 1080;
+  await chrome.runtime.sendMessage({
+    type: 'SAVE_PROXY_SETTINGS',
+    source: 'sidepanel',
+    payload: { proxyPort: port },
+  });
+});
+
+inputProxyUser.addEventListener('change', async () => {
+  await chrome.runtime.sendMessage({
+    type: 'SAVE_PROXY_SETTINGS',
+    source: 'sidepanel',
+    payload: { proxyUser: inputProxyUser.value },
+  });
+});
+
+inputProxyPass.addEventListener('change', async () => {
+  await chrome.runtime.sendMessage({
+    type: 'SAVE_PROXY_SETTINGS',
+    source: 'sidepanel',
+    payload: { proxyPass: inputProxyPass.value },
   });
 });
 

@@ -40,6 +40,12 @@ const DEFAULT_STATE = {
   imapEmailIndex: 0,           // next email index to use from the list
   imapBridgeHost: '127.0.0.1',
   imapBridgePort: 9090,
+  // Proxy settings (persisted across resets)
+  proxyType: 'none',           // 'none' | 'http' | 'https' | 'socks5'
+  proxyHost: '',
+  proxyPort: 1080,
+  proxyUser: '',
+  proxyPass: '',
 };
 
 async function getState() {
@@ -106,6 +112,11 @@ async function resetState() {
     'imapEmailIndex',
     'imapBridgeHost',
     'imapBridgePort',
+    'proxyType',
+    'proxyHost',
+    'proxyPort',
+    'proxyUser',
+    'proxyPass',
   ]);
   await chrome.storage.session.clear();
   await chrome.storage.session.set({
@@ -122,6 +133,11 @@ async function resetState() {
     imapEmailIndex: prev.imapEmailIndex || 0,
     imapBridgeHost: prev.imapBridgeHost || '127.0.0.1',
     imapBridgePort: prev.imapBridgePort || 9090,
+    proxyType: prev.proxyType || 'none',
+    proxyHost: prev.proxyHost || '',
+    proxyPort: prev.proxyPort || 1080,
+    proxyUser: prev.proxyUser || '',
+    proxyPass: prev.proxyPass || '',
   });
 }
 
@@ -647,6 +663,18 @@ async function handleMessage(message, sender) {
       if (p.imapEmailList !== undefined) updates.imapEmailList = p.imapEmailList;
       if (p.imapBridgeHost !== undefined) updates.imapBridgeHost = p.imapBridgeHost;
       if (p.imapBridgePort !== undefined) updates.imapBridgePort = Number(p.imapBridgePort) || 9090;
+      await setState(updates);
+      return { ok: true };
+    }
+
+    case 'SAVE_PROXY_SETTINGS': {
+      const updates = {};
+      const p = message.payload;
+      if (p.proxyType !== undefined) updates.proxyType = p.proxyType;
+      if (p.proxyHost !== undefined) updates.proxyHost = p.proxyHost;
+      if (p.proxyPort !== undefined) updates.proxyPort = Number(p.proxyPort) || 1080;
+      if (p.proxyUser !== undefined) updates.proxyUser = p.proxyUser;
+      if (p.proxyPass !== undefined) updates.proxyPass = p.proxyPass;
       await setState(updates);
       return { ok: true };
     }
@@ -1222,6 +1250,12 @@ async function autoRunLoop(totalRuns) {
   let failedRun = null;
   await setState({ autoRunning: true });
 
+  // Enable proxy if configured
+  const initialState = await getState();
+  if (initialState.proxyType && initialState.proxyType !== 'none' && initialState.proxyHost) {
+    await setProxy(initialState);
+  }
+
   for (let run = 1; run <= totalRuns; run++) {
     autoRunCurrentRun = run;
 
@@ -1346,6 +1380,12 @@ async function autoRunLoop(totalRuns) {
   autoRunActive = false;
   await setState({ autoRunning: false });
   clearStopRequest();
+
+  // Disable proxy after run completes or stops
+  const finalState = await getState();
+  if (finalState.proxyType && finalState.proxyType !== 'none' && finalState.proxyHost) {
+    await clearProxy();
+  }
 }
 
 function waitForResume() {
@@ -1917,6 +1957,78 @@ async function executeStep9(state) {
     source: 'background',
     payload: { localhostUrl: state.localhostUrl },
   });
+}
+
+// ============================================================
+// Proxy Management
+// ============================================================
+
+/**
+ * Apply a proxy configuration using chrome.proxy API.
+ * Supports HTTP, HTTPS, SOCKS5 proxy types.
+ * Does nothing if proxyType is 'none' or host is empty.
+ */
+async function setProxy(state) {
+  const { proxyType, proxyHost, proxyPort, proxyUser, proxyPass } = state;
+
+  if (!proxyType || proxyType === 'none' || !proxyHost || !proxyHost.trim()) {
+    return; // No proxy configured
+  }
+
+  const scheme = proxyType === 'socks5' ? 'socks5' : proxyType === 'https' ? 'https' : 'http';
+  const port = Number(proxyPort) || 1080;
+
+  const proxyConfig = {
+    mode: 'fixed_servers',
+    rules: {
+      singleProxy: {
+        scheme,
+        host: proxyHost.trim(),
+        port,
+      },
+      bypassList: ['localhost', '127.0.0.1', '::1'],
+    },
+  };
+
+  await chrome.proxy.settings.set({ value: proxyConfig, scope: 'regular' });
+  await addLog(`Proxy enabled: ${scheme}://${proxyHost.trim()}:${port}`, 'info');
+
+  // If credentials are provided, handle proxy auth challenge
+  if (proxyUser && proxyPass) {
+    // Store credentials so the onAuthRequired handler can use them
+    proxyCredentials = { username: proxyUser, password: proxyPass };
+    if (!proxyAuthListenerActive) {
+      chrome.webRequest.onAuthRequired.addListener(
+        handleProxyAuth,
+        { urls: ['<all_urls>'] },
+        ['blocking']
+      );
+      proxyAuthListenerActive = true;
+    }
+  }
+}
+
+/**
+ * Remove proxy settings and restore direct connection.
+ */
+async function clearProxy() {
+  proxyCredentials = null;
+  if (proxyAuthListenerActive) {
+    chrome.webRequest.onAuthRequired.removeListener(handleProxyAuth);
+    proxyAuthListenerActive = false;
+  }
+  await chrome.proxy.settings.clear({ scope: 'regular' });
+  await addLog('Proxy disabled.', 'info');
+}
+
+let proxyCredentials = null;
+let proxyAuthListenerActive = false;
+
+function handleProxyAuth(details) {
+  if (details.isProxy && proxyCredentials) {
+    return { authCredentials: proxyCredentials };
+  }
+  return {};
 }
 
 // ============================================================

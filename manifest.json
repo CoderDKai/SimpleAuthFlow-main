@@ -10,7 +10,10 @@
     "debugger",
     "storage",
     "scripting",
-    "activeTab"
+    "activeTab",
+    "proxy",
+    "webRequest",
+    "webRequestAuthProvider"
   ],
   "host_permissions": [
     "<all_urls>"
