@@ -34,6 +34,12 @@ const DEFAULT_STATE = {
   logs: [],
   vpsUrl: '',
   customPassword: '',
+  // IMAP mode settings (persisted across resets)
+  emailMode: 'burner',         // 'burner' | 'imap'
+  imapEmailList: [],           // array of email strings
+  imapEmailIndex: 0,           // next email index to use from the list
+  imapBridgeHost: '127.0.0.1',
+  imapBridgePort: 9090,
 };
 
 async function getState() {
@@ -95,6 +101,11 @@ async function resetState() {
     'tabRegistry',
     'vpsUrl',
     'customPassword',
+    'emailMode',
+    'imapEmailList',
+    'imapEmailIndex',
+    'imapBridgeHost',
+    'imapBridgePort',
   ]);
   await chrome.storage.session.clear();
   await chrome.storage.session.set({
@@ -106,6 +117,11 @@ async function resetState() {
     tabRegistry: prev.tabRegistry || {},
     vpsUrl: prev.vpsUrl || '',
     customPassword: prev.customPassword || '',
+    emailMode: prev.emailMode || 'burner',
+    imapEmailList: prev.imapEmailList || [],
+    imapEmailIndex: prev.imapEmailIndex || 0,
+    imapBridgeHost: prev.imapBridgeHost || '127.0.0.1',
+    imapBridgePort: prev.imapBridgePort || 9090,
   });
 }
 
@@ -620,6 +636,17 @@ async function handleMessage(message, sender) {
       const updates = {};
       if (message.payload.vpsUrl !== undefined) updates.vpsUrl = normalizeVpsUrl(message.payload.vpsUrl);
       if (message.payload.customPassword !== undefined) updates.customPassword = message.payload.customPassword;
+      await setState(updates);
+      return { ok: true };
+    }
+
+    case 'SAVE_IMAP_SETTINGS': {
+      const updates = {};
+      const p = message.payload;
+      if (p.emailMode !== undefined) updates.emailMode = p.emailMode;
+      if (p.imapEmailList !== undefined) updates.imapEmailList = p.imapEmailList;
+      if (p.imapBridgeHost !== undefined) updates.imapBridgeHost = p.imapBridgeHost;
+      if (p.imapBridgePort !== undefined) updates.imapBridgePort = Number(p.imapBridgePort) || 9090;
       await setState(updates);
       return { ok: true };
     }
@@ -1222,37 +1249,53 @@ async function autoRunLoop(totalRuns) {
       await executeStepAndWait(2, 2000);
 
       let emailReady = false;
-      while (!emailReady) {
-        try {
-          const burnerEmail = await fetchBurnerEmail({ generateNew: true });
-          await addLog(`=== Run ${run}/${totalRuns} — Burner email ready: ${burnerEmail} ===`, 'ok');
-          emailReady = true;
-          autoRunResumeMode = null;
-        } catch (err) {
-          if (isBurnerChallengeError(err)) {
-            await waitForBurnerChallengeResolution(`Run ${run}/${totalRuns}`);
-            continue;
+
+      // IMAP mode: pick next email from list; Burner mode: fetch from BurnerMailbox
+      const runState = await getState();
+      if (runState.emailMode === 'imap') {
+        const list = (runState.imapEmailList || []).filter(e => e.trim());
+        if (list.length === 0) {
+          throw new Error('IMAP email list is empty. Please add emails in the panel first.');
+        }
+        const idx = runState.imapEmailIndex || 0;
+        const nextEmail = list[idx % list.length];
+        await setState({ imapEmailIndex: idx + 1 });
+        await setEmailState(nextEmail);
+        await addLog(`=== Run ${run}/${totalRuns} — IMAP email: ${nextEmail} ===`, 'ok');
+        emailReady = true;
+      } else {
+        while (!emailReady) {
+          try {
+            const burnerEmail = await fetchBurnerEmail({ generateNew: true });
+            await addLog(`=== Run ${run}/${totalRuns} — Burner email ready: ${burnerEmail} ===`, 'ok');
+            emailReady = true;
+            autoRunResumeMode = null;
+          } catch (err) {
+            if (isBurnerChallengeError(err)) {
+              await waitForBurnerChallengeResolution(`Run ${run}/${totalRuns}`);
+              continue;
+            }
+
+            await addLog(`Burner Mailbox auto-fetch failed: ${err.message}`, 'warn');
+            break;
           }
-
-          await addLog(`Burner Mailbox auto-fetch failed: ${err.message}`, 'warn');
-          break;
         }
-      }
 
-      if (!emailReady) {
-        await addLog(`=== Run ${run}/${totalRuns} PAUSED: Fetch Burner Mailbox email or paste manually, then continue ===`, 'warn');
-        autoRunResumeMode = 'email';
-        chrome.runtime.sendMessage(status('waiting_email')).catch(() => {});
+        if (!emailReady) {
+          await addLog(`=== Run ${run}/${totalRuns} PAUSED: Fetch Burner Mailbox email or paste manually, then continue ===`, 'warn');
+          autoRunResumeMode = 'email';
+          chrome.runtime.sendMessage(status('waiting_email')).catch(() => {});
 
-        // Wait for RESUME_AUTO_RUN — sets a promise that resumeAutoRun resolves
-        await waitForResume();
+          // Wait for RESUME_AUTO_RUN — sets a promise that resumeAutoRun resolves
+          await waitForResume();
 
-        const resumedState = await getState();
-        if (!resumedState.email) {
-          await addLog('Cannot resume: no email address.', 'error');
-          break;
+          const resumedState = await getState();
+          if (!resumedState.email) {
+            await addLog('Cannot resume: no email address.', 'error');
+            break;
+          }
+          autoRunResumeMode = null;
         }
-        autoRunResumeMode = null;
       }
 
       await addLog(`=== Run ${run}/${totalRuns} — Phase 2: Register, verify, login, complete ===`, 'info');
@@ -1400,7 +1443,10 @@ async function executeStep3(state) {
 // ============================================================
 
 function getMailConfig(state) {
-  return { source: 'burner-mail', url: BURNER_MAILBOX_URL, label: 'Burner Mailbox' };
+  if (state.emailMode === 'imap') {
+    return { type: 'imap', label: 'IMAP Bridge' };
+  }
+  return { type: 'burner', source: 'burner-mail', url: BURNER_MAILBOX_URL, label: 'Burner Mailbox' };
 }
 
 function isNoMatchingEmailError(error) {
@@ -1443,6 +1489,57 @@ async function requestVerificationEmailResend(step, clicks = 2) {
   });
 }
 
+async function pollCodeViaImapBridge({ email, filterAfterTimestamp, bridgeHost, bridgePort, step, successLogMessage, failureLabel }) {
+  const baseUrl = `http://${bridgeHost}:${bridgePort}`;
+  const maxAttempts = 25; // ~100 seconds
+  const intervalMs = 4000;
+
+  await addLog(`Step ${step}: Polling IMAP bridge at ${baseUrl} for ${email}...`);
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    throwIfStopped();
+
+    if (attempt > 1) {
+      await addLog(`Step ${step}: IMAP bridge poll attempt ${attempt}/${maxAttempts}...`);
+    }
+
+    try {
+      const params = new URLSearchParams({
+        email,
+        since: String(filterAfterTimestamp || 0),
+      });
+      const res = await fetch(`${baseUrl}/latest-code?${params}`, {
+        signal: AbortSignal.timeout(20000),
+      });
+
+      if (res.status === 200) {
+        const data = await res.json();
+        if (data.code) {
+          await setState({ lastEmailTimestamp: Date.now() });
+          await addLog(successLogMessage(data.code), 'ok');
+          return data.code;
+        }
+      } else if (res.status === 404) {
+        // Not found yet, keep polling
+        if (attempt === 1) {
+          await addLog(`Step ${step}: No code yet, waiting for email to arrive...`);
+        }
+      } else {
+        const text = await res.text().catch(() => '');
+        await addLog(`Step ${step}: IMAP bridge returned ${res.status}: ${text.slice(0, 100)}`, 'warn');
+      }
+    } catch (err) {
+      await addLog(`Step ${step}: IMAP bridge connection failed (${err.message}). Is imap_bridge.py running on ${baseUrl}?`, 'warn');
+    }
+
+    if (attempt < maxAttempts) {
+      await sleepWithStop(intervalMs);
+    }
+  }
+
+  throw new Error(failureLabel || `IMAP bridge: No verification code found after ${maxAttempts * intervalMs / 1000}s.`);
+}
+
 async function pollVerificationCodeWithRetry(step, state, options) {
   const {
     filterAfterTimestamp,
@@ -1455,6 +1552,19 @@ async function pollVerificationCodeWithRetry(step, state, options) {
 
   const mail = getMailConfig(state);
   if (mail.error) throw new Error(mail.error);
+
+  // IMAP bridge mode: poll HTTP bridge instead of navigating to BurnerMailbox
+  if (mail.type === 'imap') {
+    return await pollCodeViaImapBridge({
+      email: targetEmail,
+      filterAfterTimestamp,
+      bridgeHost: state.imapBridgeHost || '127.0.0.1',
+      bridgePort: state.imapBridgePort || 9090,
+      step,
+      successLogMessage,
+      failureLabel,
+    });
+  }
 
   const maxResendRounds = 3;
 

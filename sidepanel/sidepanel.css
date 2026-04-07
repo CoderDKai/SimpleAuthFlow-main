@@ -306,22 +306,41 @@ header {
   padding-inline: 10px;
 }
 
-.data-select {
-  flex: 1;
-  padding: 7px 10px;
-  background: var(--bg-base);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  color: var(--text-primary);
-  font-family: inherit;
-  font-size: 13px;
-  outline: none;
-  cursor: pointer;
-  transition: border-color var(--transition);
-  min-width: 0;
+.data-row-top {
+  align-items: flex-start;
 }
-.data-select:focus { border-color: var(--blue); box-shadow: 0 0 0 3px var(--blue-soft); }
-[data-theme="dark"] .data-select { color-scheme: dark; }
+
+.data-row-top .data-label {
+  padding-top: 8px;
+}
+
+.data-textarea {
+  resize: vertical;
+  min-height: 64px;
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 6px 10px;
+}
+
+.data-sep {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.data-input-port {
+  max-width: 70px;
+  flex: none;
+}
+
+#imap-section {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+
 
 /* Status Bar */
 .status-bar {

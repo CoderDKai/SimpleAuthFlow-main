@@ -27,6 +27,12 @@ const autoContinueHint = document.getElementById('auto-continue-hint');
 const btnClearLog = document.getElementById('btn-clear-log');
 const inputVpsUrl = document.getElementById('input-vps-url');
 const inputRunCount = document.getElementById('input-run-count');
+// IMAP mode elements
+const selectEmailMode = document.getElementById('select-email-mode');
+const imapSection = document.getElementById('imap-section');
+const inputImapEmailList = document.getElementById('input-imap-email-list');
+const inputImapBridgeHost = document.getElementById('input-imap-bridge-host');
+const inputImapBridgePort = document.getElementById('input-imap-bridge-port');
 let autoContinueMode = 'email';
 
 // ============================================================
@@ -85,6 +91,21 @@ async function restoreState() {
       inputVpsUrl.value = state.vpsUrl;
     }
 
+    // Restore IMAP settings
+    if (state.emailMode) {
+      selectEmailMode.value = state.emailMode;
+      applyEmailModeUI(state.emailMode);
+    }
+    if (state.imapEmailList && Array.isArray(state.imapEmailList)) {
+      inputImapEmailList.value = state.imapEmailList.join('\n');
+    }
+    if (state.imapBridgeHost) {
+      inputImapBridgeHost.value = state.imapBridgeHost;
+    }
+    if (state.imapBridgePort) {
+      inputImapBridgePort.value = state.imapBridgePort;
+    }
+
     if (state.stepStatuses) {
       for (const [step, status] of Object.entries(state.stepStatuses)) {
         updateStepUI(Number(step), status);
@@ -106,6 +127,20 @@ async function restoreState() {
 
 function syncPasswordField(state) {
   inputPassword.value = state.customPassword || state.password || '';
+}
+
+function applyEmailModeUI(mode) {
+  if (mode === 'imap') {
+    imapSection.style.display = '';
+    btnFetchEmail.style.display = 'none';
+    inputEmail.placeholder = 'Auto-selected from IMAP list';
+    inputEmail.readOnly = true;
+  } else {
+    imapSection.style.display = 'none';
+    btnFetchEmail.style.display = '';
+    inputEmail.placeholder = 'Auto fetch from Burner Mailbox or paste manually';
+    inputEmail.readOnly = false;
+  }
 }
 
 // ============================================================
@@ -356,7 +391,9 @@ btnReset.addEventListener('click', async () => {
     displayOauthUrl.classList.remove('has-value');
     displayLocalhostUrl.textContent = 'Waiting...';
     displayLocalhostUrl.classList.remove('has-value');
-    inputEmail.value = '';
+    if (selectEmailMode.value !== 'imap') {
+      inputEmail.value = '';
+    }
     displayStatus.textContent = 'Ready';
     statusBar.className = 'status-bar';
     logArea.innerHTML = '';
@@ -395,6 +432,43 @@ inputPassword.addEventListener('change', async () => {
     type: 'SAVE_SETTING',
     source: 'sidepanel',
     payload: { customPassword: inputPassword.value },
+  });
+});
+
+// IMAP mode settings
+selectEmailMode.addEventListener('change', async () => {
+  const mode = selectEmailMode.value;
+  applyEmailModeUI(mode);
+  await chrome.runtime.sendMessage({
+    type: 'SAVE_IMAP_SETTINGS',
+    source: 'sidepanel',
+    payload: { emailMode: mode },
+  });
+});
+
+inputImapEmailList.addEventListener('change', async () => {
+  const list = inputImapEmailList.value.split('\n').map(e => e.trim()).filter(Boolean);
+  await chrome.runtime.sendMessage({
+    type: 'SAVE_IMAP_SETTINGS',
+    source: 'sidepanel',
+    payload: { imapEmailList: list },
+  });
+});
+
+inputImapBridgeHost.addEventListener('change', async () => {
+  await chrome.runtime.sendMessage({
+    type: 'SAVE_IMAP_SETTINGS',
+    source: 'sidepanel',
+    payload: { imapBridgeHost: inputImapBridgeHost.value.trim() || '127.0.0.1' },
+  });
+});
+
+inputImapBridgePort.addEventListener('change', async () => {
+  const port = parseInt(inputImapBridgePort.value) || 9090;
+  await chrome.runtime.sendMessage({
+    type: 'SAVE_IMAP_SETTINGS',
+    source: 'sidepanel',
+    payload: { imapBridgePort: port },
   });
 });
 
@@ -437,7 +511,10 @@ chrome.runtime.onMessage.addListener((message) => {
       displayOauthUrl.classList.remove('has-value');
       displayLocalhostUrl.textContent = 'Waiting...';
       displayLocalhostUrl.classList.remove('has-value');
-      inputEmail.value = '';
+      // In IMAP mode, the email gets set automatically — keep field readable but clear it
+      if (selectEmailMode.value !== 'imap') {
+        inputEmail.value = '';
+      }
       displayStatus.textContent = 'Ready';
       statusBar.className = 'status-bar';
       logArea.innerHTML = '';

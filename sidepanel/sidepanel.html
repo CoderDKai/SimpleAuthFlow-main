@@ -50,7 +50,25 @@
       </div>
       <div class="data-row">
         <span class="data-label">Mail</span>
-        <span class="data-value">Burner Mailbox</span>
+        <select id="select-email-mode" class="data-select">
+          <option value="burner">Burner Mailbox</option>
+          <option value="imap">IMAP List</option>
+        </select>
+      </div>
+      <!-- IMAP config (shown only in IMAP mode) -->
+      <div id="imap-section" style="display:none;">
+        <div class="data-row data-row-top">
+          <span class="data-label">Emails</span>
+          <textarea id="input-imap-email-list" class="data-input data-textarea" placeholder="One email per line&#10;user1@example.com&#10;user2@example.com" rows="3"></textarea>
+        </div>
+        <div class="data-row">
+          <span class="data-label">Bridge</span>
+          <div class="data-inline">
+            <input type="text" id="input-imap-bridge-host" class="data-input" placeholder="127.0.0.1" value="127.0.0.1" />
+            <span class="data-sep">:</span>
+            <input type="number" id="input-imap-bridge-port" class="data-input data-input-port" placeholder="9090" value="9090" min="1" max="65535" />
+          </div>
+        </div>
       </div>
       <div class="data-row">
         <span class="data-label">Email</span>
