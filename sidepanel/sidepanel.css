@@ -360,14 +360,11 @@ header {
   min-width: 80px;
 }
 
-#proxy-auth-section {
+#proxy-webshare-section,
+#proxy-brightdata-section {
   display: flex;
   flex-direction: column;
   gap: 9px;
-}
-
-#proxy-auth-section .data-input {
-  font-size: 12px;
 }
 
 

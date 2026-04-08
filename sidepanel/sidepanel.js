@@ -35,12 +35,13 @@ const inputImapBridgeHost = document.getElementById('input-imap-bridge-host');
 const inputImapBridgePort = document.getElementById('input-imap-bridge-port');
 // Proxy elements
 const selectProxyType = document.getElementById('select-proxy-type');
-const inputProxyHost = document.getElementById('input-proxy-host');
-const inputProxyPort = document.getElementById('input-proxy-port');
-const proxyHostSep = document.querySelector('.proxy-host-sep');
-const proxyAuthSection = document.getElementById('proxy-auth-section');
-const inputProxyUser = document.getElementById('input-proxy-user');
-const inputProxyPass = document.getElementById('input-proxy-pass');
+const proxyWebshareSection = document.getElementById('proxy-webshare-section');
+const proxyBrightdataSection = document.getElementById('proxy-brightdata-section');
+const inputProxyWsApikey = document.getElementById('input-proxy-ws-apikey');
+const inputProxyBdHost = document.getElementById('input-proxy-bd-host');
+const inputProxyBdPort = document.getElementById('input-proxy-bd-port');
+const inputProxyBdUser = document.getElementById('input-proxy-bd-user');
+const inputProxyBdPass = document.getElementById('input-proxy-bd-pass');
 let autoContinueMode = 'email';
 
 // ============================================================
@@ -119,17 +120,20 @@ async function restoreState() {
       selectProxyType.value = state.proxyType;
       applyProxyUI(state.proxyType);
     }
-    if (state.proxyHost) {
-      inputProxyHost.value = state.proxyHost;
+    if (state.proxyWsApikey) {
+      inputProxyWsApikey.value = state.proxyWsApikey;
     }
-    if (state.proxyPort) {
-      inputProxyPort.value = state.proxyPort;
+    if (state.proxyBdHost) {
+      inputProxyBdHost.value = state.proxyBdHost;
     }
-    if (state.proxyUser) {
-      inputProxyUser.value = state.proxyUser;
+    if (state.proxyBdPort) {
+      inputProxyBdPort.value = state.proxyBdPort;
     }
-    if (state.proxyPass) {
-      inputProxyPass.value = state.proxyPass;
+    if (state.proxyBdUser) {
+      inputProxyBdUser.value = state.proxyBdUser;
+    }
+    if (state.proxyBdPass) {
+      inputProxyBdPass.value = state.proxyBdPass;
     }
 
     if (state.stepStatuses) {
@@ -170,12 +174,8 @@ function applyEmailModeUI(mode) {
 }
 
 function applyProxyUI(type) {
-  const hasProxy = type && type !== 'none';
-  const displayVal = hasProxy ? '' : 'none';
-  inputProxyHost.style.display = displayVal;
-  inputProxyPort.style.display = displayVal;
-  proxyHostSep.style.display = displayVal;
-  proxyAuthSection.style.display = displayVal;
+  proxyWebshareSection.style.display = type === 'webshare' ? '' : 'none';
+  proxyBrightdataSection.style.display = type === 'brightdata' ? '' : 'none';
 }
 
 // ============================================================
@@ -518,36 +518,44 @@ selectProxyType.addEventListener('change', async () => {
   });
 });
 
-inputProxyHost.addEventListener('change', async () => {
+inputProxyWsApikey.addEventListener('change', async () => {
   await chrome.runtime.sendMessage({
     type: 'SAVE_PROXY_SETTINGS',
     source: 'sidepanel',
-    payload: { proxyHost: inputProxyHost.value.trim() },
+    payload: { proxyWsApikey: inputProxyWsApikey.value.trim() },
   });
 });
 
-inputProxyPort.addEventListener('change', async () => {
-  const port = parseInt(inputProxyPort.value) || 1080;
+inputProxyBdHost.addEventListener('change', async () => {
   await chrome.runtime.sendMessage({
     type: 'SAVE_PROXY_SETTINGS',
     source: 'sidepanel',
-    payload: { proxyPort: port },
+    payload: { proxyBdHost: inputProxyBdHost.value.trim() },
   });
 });
 
-inputProxyUser.addEventListener('change', async () => {
+inputProxyBdPort.addEventListener('change', async () => {
+  const port = parseInt(inputProxyBdPort.value) || 22225;
   await chrome.runtime.sendMessage({
     type: 'SAVE_PROXY_SETTINGS',
     source: 'sidepanel',
-    payload: { proxyUser: inputProxyUser.value },
+    payload: { proxyBdPort: port },
   });
 });
 
-inputProxyPass.addEventListener('change', async () => {
+inputProxyBdUser.addEventListener('change', async () => {
   await chrome.runtime.sendMessage({
     type: 'SAVE_PROXY_SETTINGS',
     source: 'sidepanel',
-    payload: { proxyPass: inputProxyPass.value },
+    payload: { proxyBdUser: inputProxyBdUser.value.trim() },
+  });
+});
+
+inputProxyBdPass.addEventListener('change', async () => {
+  await chrome.runtime.sendMessage({
+    type: 'SAVE_PROXY_SETTINGS',
+    source: 'sidepanel',
+    payload: { proxyBdPass: inputProxyBdPass.value },
   });
 });
 

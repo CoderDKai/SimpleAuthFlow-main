@@ -41,11 +41,12 @@ const DEFAULT_STATE = {
   imapBridgeHost: '127.0.0.1',
   imapBridgePort: 9090,
   // Proxy settings (persisted across resets)
-  proxyType: 'none',           // 'none' | 'http' | 'https' | 'socks5'
-  proxyHost: '',
-  proxyPort: 1080,
-  proxyUser: '',
-  proxyPass: '',
+  proxyType: 'none',           // 'none' | 'webshare' | 'brightdata'
+  proxyWsApikey: '',           // Webshare API key
+  proxyBdHost: 'brd.superproxy.io',  // Bright Data host
+  proxyBdPort: 22225,          // Bright Data port
+  proxyBdUser: '',             // Bright Data username (brd-customer-xxx-zone-yyy)
+  proxyBdPass: '',             // Bright Data zone password
 };
 
 async function getState() {
@@ -113,10 +114,11 @@ async function resetState() {
     'imapBridgeHost',
     'imapBridgePort',
     'proxyType',
-    'proxyHost',
-    'proxyPort',
-    'proxyUser',
-    'proxyPass',
+    'proxyWsApikey',
+    'proxyBdHost',
+    'proxyBdPort',
+    'proxyBdUser',
+    'proxyBdPass',
   ]);
   await chrome.storage.session.clear();
   await chrome.storage.session.set({
@@ -134,10 +136,11 @@ async function resetState() {
     imapBridgeHost: prev.imapBridgeHost || '127.0.0.1',
     imapBridgePort: prev.imapBridgePort || 9090,
     proxyType: prev.proxyType || 'none',
-    proxyHost: prev.proxyHost || '',
-    proxyPort: prev.proxyPort || 1080,
-    proxyUser: prev.proxyUser || '',
-    proxyPass: prev.proxyPass || '',
+    proxyWsApikey: prev.proxyWsApikey || '',
+    proxyBdHost: prev.proxyBdHost || 'brd.superproxy.io',
+    proxyBdPort: prev.proxyBdPort || 22225,
+    proxyBdUser: prev.proxyBdUser || '',
+    proxyBdPass: prev.proxyBdPass || '',
   });
 }
 
@@ -671,10 +674,11 @@ async function handleMessage(message, sender) {
       const updates = {};
       const p = message.payload;
       if (p.proxyType !== undefined) updates.proxyType = p.proxyType;
-      if (p.proxyHost !== undefined) updates.proxyHost = p.proxyHost;
-      if (p.proxyPort !== undefined) updates.proxyPort = Number(p.proxyPort) || 1080;
-      if (p.proxyUser !== undefined) updates.proxyUser = p.proxyUser;
-      if (p.proxyPass !== undefined) updates.proxyPass = p.proxyPass;
+      if (p.proxyWsApikey !== undefined) updates.proxyWsApikey = p.proxyWsApikey;
+      if (p.proxyBdHost !== undefined) updates.proxyBdHost = p.proxyBdHost;
+      if (p.proxyBdPort !== undefined) updates.proxyBdPort = Number(p.proxyBdPort) || 22225;
+      if (p.proxyBdUser !== undefined) updates.proxyBdUser = p.proxyBdUser;
+      if (p.proxyBdPass !== undefined) updates.proxyBdPass = p.proxyBdPass;
       await setState(updates);
       return { ok: true };
     }
@@ -1252,7 +1256,7 @@ async function autoRunLoop(totalRuns) {
 
   // Enable proxy if configured
   const initialState = await getState();
-  if (initialState.proxyType && initialState.proxyType !== 'none' && initialState.proxyHost) {
+  if (initialState.proxyType && initialState.proxyType !== 'none') {
     await setProxy(initialState);
   }
 
@@ -1383,7 +1387,7 @@ async function autoRunLoop(totalRuns) {
 
   // Disable proxy after run completes or stops
   const finalState = await getState();
-  if (finalState.proxyType && finalState.proxyType !== 'none' && finalState.proxyHost) {
+  if (finalState.proxyType && finalState.proxyType !== 'none') {
     await clearProxy();
   }
 }
@@ -1963,40 +1967,164 @@ async function executeStep9(state) {
 // Proxy Management
 // ============================================================
 
+const PROXY_TEST_URL = 'https://auth.openai.com/';
+const PROXY_TEST_TIMEOUT_MS = 10000;
+
+/**
+ * Test whether a proxy is reachable by attempting to connect through it.
+ * Uses chrome.proxy to temporarily set the proxy and fires a fetch.
+ * Returns true if the test request succeeds (any HTTP response counts as reachable).
+ */
+async function testProxyReachability(scheme, host, port, username, password) {
+  return new Promise((resolve) => {
+    const testConfig = {
+      mode: 'fixed_servers',
+      rules: {
+        singleProxy: { scheme, host, port },
+        bypassList: ['localhost', '127.0.0.1', '::1'],
+      },
+    };
+
+    // Temporarily store test credentials if needed
+    const prevCreds = proxyCredentials;
+    if (username && password) {
+      proxyCredentials = { username, password };
+      if (!proxyAuthListenerActive) {
+        chrome.webRequest.onAuthRequired.addListener(
+          handleProxyAuth,
+          { urls: ['<all_urls>'] },
+          ['blocking']
+        );
+        proxyAuthListenerActive = true;
+      }
+    }
+
+    chrome.proxy.settings.set({ value: testConfig, scope: 'regular' }, async () => {
+      try {
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), PROXY_TEST_TIMEOUT_MS);
+        const res = await fetch(PROXY_TEST_URL, { signal: ctrl.signal, method: 'HEAD' });
+        clearTimeout(timer);
+        resolve(res.status < 600); // any HTTP response means proxy is up
+      } catch {
+        resolve(false);
+      } finally {
+        // Restore previous credentials
+        proxyCredentials = prevCreds;
+      }
+    });
+  });
+}
+
+/**
+ * Fetch Webshare proxy list via API and return an array of proxy objects.
+ * Each object: { host, port, username, password, country }
+ */
+async function fetchWebshareProxyList(apiKey) {
+  const url = 'https://proxy.webshare.io/api/v2/proxy/list/?mode=direct&page=1&page_size=100';
+  const res = await fetch(url, {
+    headers: { 'Authorization': `Token ${apiKey}` },
+    signal: AbortSignal.timeout(15000),
+  });
+  if (!res.ok) {
+    throw new Error(`Webshare API error: ${res.status} ${res.statusText}`);
+  }
+  const data = await res.json();
+  const proxies = (data.results || [])
+    .filter(p => p.valid)
+    .map(p => ({
+      host: p.proxy_address,
+      port: p.port,
+      username: p.username,
+      password: p.password,
+      country: p.country_code || '',
+    }));
+  if (proxies.length === 0) {
+    throw new Error('Webshare returned no valid proxies.');
+  }
+  return proxies;
+}
+
+/**
+ * Select a working proxy from Webshare list.
+ * Shuffles and tests up to 5 candidates; returns first working one.
+ */
+async function selectWorkingWebshareProxy(apiKey) {
+  await addLog('Proxy: Fetching Webshare proxy list...', 'info');
+  const proxies = await fetchWebshareProxyList(apiKey);
+  await addLog(`Proxy: ${proxies.length} valid proxies available. Testing...`, 'info');
+
+  // Shuffle and pick up to 5 to test
+  const shuffled = proxies.sort(() => Math.random() - 0.5).slice(0, 5);
+  for (const proxy of shuffled) {
+    await addLog(`Proxy: Testing ${proxy.host}:${proxy.port} (${proxy.country})...`);
+    const ok = await testProxyReachability('http', proxy.host, proxy.port, proxy.username, proxy.password);
+    if (ok) {
+      await addLog(`Proxy: ${proxy.host}:${proxy.port} OK`, 'ok');
+      return proxy;
+    } else {
+      await addLog(`Proxy: ${proxy.host}:${proxy.port} failed, trying next...`, 'warn');
+    }
+  }
+  throw new Error('Webshare: no reachable proxy found after testing 5 candidates.');
+}
+
 /**
  * Apply a proxy configuration using chrome.proxy API.
- * Supports HTTP, HTTPS, SOCKS5 proxy types.
- * Does nothing if proxyType is 'none' or host is empty.
+ * For Webshare: fetches list from API, tests, picks working proxy.
+ * For Bright Data: tests single endpoint.
  */
 async function setProxy(state) {
-  const { proxyType, proxyHost, proxyPort, proxyUser, proxyPass } = state;
+  const { proxyType } = state;
 
-  if (!proxyType || proxyType === 'none' || !proxyHost || !proxyHost.trim()) {
-    return; // No proxy configured
+  if (!proxyType || proxyType === 'none') return;
+
+  let scheme, host, port, username, password;
+
+  if (proxyType === 'webshare') {
+    if (!state.proxyWsApikey) {
+      throw new Error('Webshare API key is not configured.');
+    }
+    const proxy = await selectWorkingWebshareProxy(state.proxyWsApikey);
+    scheme = 'http';
+    host = proxy.host;
+    port = proxy.port;
+    username = proxy.username;
+    password = proxy.password;
+
+  } else if (proxyType === 'brightdata') {
+    if (!state.proxyBdHost || !state.proxyBdUser || !state.proxyBdPass) {
+      throw new Error('Bright Data proxy host/user/password is not fully configured.');
+    }
+    scheme = 'http';
+    host = state.proxyBdHost.trim();
+    port = Number(state.proxyBdPort) || 22225;
+    username = state.proxyBdUser.trim();
+    password = state.proxyBdPass;
+
+    await addLog(`Proxy: Testing Bright Data ${host}:${port}...`, 'info');
+    const ok = await testProxyReachability(scheme, host, port, username, password);
+    if (!ok) {
+      throw new Error(`Bright Data proxy ${host}:${port} is not reachable.`);
+    }
+    await addLog(`Proxy: Bright Data ${host}:${port} OK`, 'ok');
+  } else {
+    return;
   }
-
-  const scheme = proxyType === 'socks5' ? 'socks5' : proxyType === 'https' ? 'https' : 'http';
-  const port = Number(proxyPort) || 1080;
 
   const proxyConfig = {
     mode: 'fixed_servers',
     rules: {
-      singleProxy: {
-        scheme,
-        host: proxyHost.trim(),
-        port,
-      },
+      singleProxy: { scheme, host, port },
       bypassList: ['localhost', '127.0.0.1', '::1'],
     },
   };
 
   await chrome.proxy.settings.set({ value: proxyConfig, scope: 'regular' });
-  await addLog(`Proxy enabled: ${scheme}://${proxyHost.trim()}:${port}`, 'info');
+  await addLog(`Proxy enabled: ${scheme}://${host}:${port}`, 'info');
 
-  // If credentials are provided, handle proxy auth challenge
-  if (proxyUser && proxyPass) {
-    // Store credentials so the onAuthRequired handler can use them
-    proxyCredentials = { username: proxyUser, password: proxyPass };
+  if (username && password) {
+    proxyCredentials = { username, password };
     if (!proxyAuthListenerActive) {
       chrome.webRequest.onAuthRequired.addListener(
         handleProxyAuth,

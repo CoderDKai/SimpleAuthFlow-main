@@ -50,26 +50,36 @@
       </div>
       <div class="data-row">
         <span class="data-label">Proxy</span>
-        <div class="data-inline">
-          <select id="select-proxy-type" class="data-select data-select-sm">
-            <option value="none">Off</option>
-            <option value="http">HTTP</option>
-            <option value="https">HTTPS</option>
-            <option value="socks5">SOCKS5</option>
-          </select>
-          <input type="text" id="input-proxy-host" class="data-input" placeholder="127.0.0.1" style="display:none" />
-          <span class="data-sep proxy-host-sep" style="display:none">:</span>
-          <input type="number" id="input-proxy-port" class="data-input data-input-port" placeholder="1080" min="1" max="65535" style="display:none" />
+        <select id="select-proxy-type" class="data-select">
+          <option value="none">Off</option>
+          <option value="webshare">Webshare</option>
+          <option value="brightdata">Bright Data</option>
+        </select>
+      </div>
+      <!-- Webshare config -->
+      <div id="proxy-webshare-section" style="display:none;">
+        <div class="data-row">
+          <span class="data-label">API Key</span>
+          <input type="password" id="input-proxy-ws-apikey" class="data-input" placeholder="Webshare API Key" autocomplete="off" />
         </div>
       </div>
-      <!-- Proxy auth (optional, shown when proxy type != none) -->
-      <div id="proxy-auth-section" style="display:none;">
+      <!-- Bright Data config -->
+      <div id="proxy-brightdata-section" style="display:none;">
         <div class="data-row">
-          <span class="data-label"></span>
+          <span class="data-label">Host</span>
           <div class="data-inline">
-            <input type="text" id="input-proxy-user" class="data-input" placeholder="Username (optional)" autocomplete="off" />
-            <input type="password" id="input-proxy-pass" class="data-input" placeholder="Password (optional)" autocomplete="off" />
+            <input type="text" id="input-proxy-bd-host" class="data-input" placeholder="brd.superproxy.io" />
+            <span class="data-sep">:</span>
+            <input type="number" id="input-proxy-bd-port" class="data-input data-input-port" placeholder="22225" min="1" max="65535" />
           </div>
+        </div>
+        <div class="data-row">
+          <span class="data-label">User</span>
+          <input type="text" id="input-proxy-bd-user" class="data-input" placeholder="brd-customer-xxx-zone-yyy" autocomplete="off" />
+        </div>
+        <div class="data-row">
+          <span class="data-label">Pass</span>
+          <input type="password" id="input-proxy-bd-pass" class="data-input" placeholder="Zone password" autocomplete="off" />
         </div>
       </div>
       <div class="data-row">
